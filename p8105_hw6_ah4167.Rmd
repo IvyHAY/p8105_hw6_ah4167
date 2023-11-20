@@ -157,10 +157,241 @@ tidy_results |>
     title = "Adjusted Estimated Odds Ratios and Confidence Intervals by City"
   ) +
   coord_flip()  # Rotate x-axis labels for better readability
+```
+
+# Problem 2
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+```
+
+The boostrap is helpful when you’d like to perform inference for a parameter / value / summary that doesn’t have an easy-to-write-down distribution in the usual repeated sampling framework. We’ll focus on a simple linear regression with tmax as the response with tmin and prcp as the predictors, and are interested in the distribution of two quantities estimated from these data:
+
+* $\hat{r}^2$
+
+* $log(\hat{\beta_1}*\hat{\beta_2})$
+
+Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities. Plot the distribution of your estimates, and describe these in words. Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for $\hat{r}^2$ and $log(\hat{\beta_1}*\hat{\beta_2})$
+. Note: broom::glance() is helpful for extracting $\hat{r}^2$ from a fitted regression, and broom::tidy() (with some additional wrangling) should help in computing $log(\hat{\beta_1}*\hat{\beta_2})$.
+
+```{r}
+lm(tmax~tmin+prcp,data=weather_df)|>
+  broom::glance()
+lm(tmax~tmin+prcp,data=weather_df)|>
+  broom::tidy()
+```
+```{r}
+# Load the necessary libraries
+library(dplyr)
+library(modelr)
+library(broom)
+
+# Set the number of bootstrap samples
+num_bootstraps = 5000
+
+# Create a function to extract the desired quantities
+extract_quantities = function(data) {
+  # Fit the regression model 
+  model = lm(tmax~tmin+prcp, data = data)
+  
+  # Extract r-squared using broom::glance
+  r_squared = broom::glance(model)$r.squared
+  
+  # Extract model coefficients using broom::tidy
+  model_coefficients = broom::tidy(model)
+  
+  # Calculate log(product of beta1 and beta2)
+  log_beta_product = log(prod(model_coefficients$estimate))
+  
+  return(c(r_squared, log_beta_product))
+}
+
+# Perform bootstrap resampling and extract quantities for each sample
+bootstrap_results <-weather_df|>
+  modelr::bootstrap(n = num_bootstraps) %>%
+  mutate(quantities = map(strap, extract_quantities))
+
+# Convert the results into a data frame
+bootstrap_df <- as.data.frame(do.call(rbind, bootstrap_results$quantities))
+
+# Rename columns for clarity
+colnames(bootstrap_df) <- c("R_squared", "Log_Beta_Product")
+
+# Plot the distribution of your estimates
+library(ggplot2)
+
+ggplot(bootstrap_df, aes(x = R_squared)) +
+  geom_density()+
+  labs(x = "Bootstrap R-squared)", y = "Frequency") +
+  ggtitle("Distribution of Bootstrap Estimates for r̂²")
+
+ggplot(bootstrap_df, aes(x = Log_Beta_Product)) +
+  geom_density()+
+  labs(x = "Bootstrap Log(Beta1*Beta2)", y = "Frequency") +
+  ggtitle("Distribution of Bootstrap Estimates for Log(Beta1*Beta2)")
+```
+
+$\hat{r}^2$ measures how well a model fits the data. The estimates of r squared ranged from about 0.86 (not great) to 0.95 (pretty good). Most of the estimates were around 0.91, which is quite good. And the distribution of it is is a little left-skewed.
+
+The $log(\hat{\beta_1}*\hat{\beta_2})$ ranged from about -13.4 to -2.0. The higher the number, the stronger the influence of those two things. Most of the numbers were around -4.0, suggesting a moderate influence. And the distribution of it is left-skewed.
+
+```{r}
+# Calculate 95% confidence intervals
+conf_interval_r_squared <- quantile(bootstrap_df$R_squared, c(0.025, 0.975))
+conf_interval_log_beta_product <- quantile(bootstrap_df$Log_Beta_Product, c(0.025, 0.975), na.rm = TRUE)
+
+conf_interval_r_squared
+conf_interval_log_beta_product
+```
+
+The 95% confidence intervals for $\hat{r}^2$ is [0.89,0.94], and the 95% confidence intervals for $log(\hat{\beta_1}*\hat{\beta_2})$ is [-6.97,-2.45]
 
 
+# Problem 3
+
+Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+
+```{r}
+birthweight = read.csv("./data/birthweight.csv")
+
+birthweight = birthweight|>
+  mutate(
+    babysex = case_when(
+      babysex == 1 ~ "male",
+      babysex == 2 ~ "female"
+    ),
+    frace = case_when(
+      frace == 1 ~ "White",
+      frace == 2 ~ "Black",
+      frace == 3 ~ "Asian",
+      frace == 4 ~ "Puerto Rican",
+      frace == 8 ~ "Other",
+      frace == 9 ~ "Unknown"
+    ),
+    mrace = case_when(
+      mrace == 1 ~ "White",
+      mrace == 2 ~ "Black",
+      mrace == 3 ~ "Asian",
+      mrace == 4 ~ "Puerto Rican",
+      mrace == 8 ~ "Other"
+    ),
+    malform = case_when(
+      malform == 0 ~ "absent",
+      malform == 1 ~ "present"
+    )
+  )
+
+na_values = c("", "NA", "Unknown")
+birthweight = data.frame(lapply(birthweight, function(x) {
+  if(is.numeric(x) || is.integer(x)) {
+    x
+  } else {
+    x[x %in% na_values] = NA
+    x
+  }
+}))
+
+colSums(is.na(birthweight))
+```
+There is no missing value.
+
+Propose a regression model for birthweight. This model may be based on a hypothesized structure for the factors that underly birthweight, on a data-driven model-building process, or a combination of the two. Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+
+```{r}
+library(modelr)
+# Fit the initial model
+initial_model = lm(bwt ~ gaweeks + malform + ppbmi + momage + wtgain + smoken + fincome, data = birthweight)
+
+initial_model|>summary()
+
+# Since the malformpresent is not significant, we remove it from the model
+modified_model = lm(bwt ~ gaweeks + ppbmi + momage + wtgain + smoken + fincome, data = birthweight)
+
+modified_model|>summary()
+
+# Now all the beta is significant, thus we keep the model as the final edition
+
+# Add predictions and residuals
+birthweight |>
+  add_predictions(modified_model, var = "pred_bwt") |>
+  add_residuals(modified_model, var = "residuals")|>
+  ggplot(
+    aes(x=pred_bwt,y=residuals)
+  )+
+  geom_point()+  # scatter plot of the residuals
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # a horizontal line at y = 0
+  labs(title = "Residuals vs Fitted Values", x = "Fitted Values", y = "Residuals")
+```
+
+Based on the given variables, we can propose that birthweight (bwt) is influenced by factors related to the baby's health (such as gaweeks and malform), the mother's health and characteristics (including ppbmi, momage, wtgain, and smoken), and socio-economic factors (fincome). After using the summary() function to examine the results, we observed that the coefficient for malform is not statistically significant. Consequently, we decided to remove this variable and create a new regression model. Upon analyzing the new model, we found that all variables had statistically significant coefficients. As a result, we retained the new model as the final model.
+
+
+Compare your model to two others:
+
+One using length at birth and gestational age as predictors (main effects only)
+One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+
+Note that although we expect your model to be reasonable, model building itself is not a main idea of the course and we don’t necessarily expect your model to be “optimal”.
+
+```{r}
+library(purrr)
+calculate_mse = function(formula, data) {
+  # Perform cross-validation
+  folds = crossv_mc(data, 10)  # 10-fold cross-validation
+  
+  # Function to calculate MSE for a single fold
+  mse_fold = function(df_train, df_test) {
+    model = lm(formula, data = df_train)
+    predictions = predict(model, newdata = df_test$data)
+    mean((df_test$data$bwt - predictions)^2)
+  }
+
+  # Calculate MSE for each fold and take the average
+  mse_values = map2_dbl(folds$train, folds$test, mse_fold)
+  mean(mse_values)
+}
+# Define the model formulas
+formula_original = as.formula("bwt ~gaweeks + ppbmi + momage + wtgain + smoken + fincome")  
+formula_length_gaweeks = as.formula("bwt ~ blength + gaweeks")
+formula_head_length_sex_interactions = as.formula("bwt ~ bhead * blength * babysex")
 
 ```
+
+```{r}
+# Calculate MSE for each model
+mse_original = calculate_mse(formula_original, birthweight)
+mse_length_gaweeks = calculate_mse(formula_length_gaweeks, birthweight)
+mse_head_length_sex_interactions = calculate_mse(formula_head_length_sex_interactions, birthweight)
+
+list(
+  mse_original = mse_original,
+  mse_length_gaweeks = mse_length_gaweeks,
+  mse_head_length_sex_interactions = mse_head_length_sex_interactions
+)
+```
+
+We can see from the mse got from the cross validation that the last model is the best since it has the smallest mse. Probably because it considered the interaction of variables thus it can fit the data better.
+
+
+
+
+
+
+
+
+
+
 
 
 
