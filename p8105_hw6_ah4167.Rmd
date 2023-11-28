@@ -254,7 +254,7 @@ conf_interval_r_squared
 conf_interval_log_beta_product
 ```
 
-The 95% confidence intervals for $\hat{r}^2$ is [0.89,0.94], and the 95% confidence intervals for $log(\hat{\beta_1}*\hat{\beta_2})$ is [-6.97,-2.45]
+The 95% confidence intervals for $\hat{r}^2$ is [0.89,0.94], and the 95% confidence intervals for $log(\hat{\beta_1}*\hat{\beta_2})$ is [-6.97,-2.45]. (Note: There is `r sum(is.na(bootstrap_df$Log_Beta_Product))` na in the $log(\hat{\beta_1}*\hat{\beta_2})$ data.)
 
 
 # Problem 3
